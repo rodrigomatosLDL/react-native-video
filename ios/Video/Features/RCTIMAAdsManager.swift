@@ -5,6 +5,7 @@
     class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, IMALinkOpenerDelegate {
         private weak var _video: RCTVideo?
         private var _isPictureInPictureActive: () -> Bool
+        private var adBreakStarted = false
 
         /* Entry point for the SDK. Used to make ad requests. */
         private var adsLoader: IMAAdsLoader!
@@ -100,38 +101,50 @@
 
         // MARK: - IMAAdsManagerDelegate
 
-        func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
-            guard let _video else { return }
-            // Mute ad if the main player is muted
-            if _video.isMuted() {
-                adsManager.volume = 0
-            }
-            // Play each ad once it has been loaded
-            if event.type == IMAAdEventType.LOADED {
-                if _isPictureInPictureActive() {
-                    return
-                }
-                adsManager.start()
-            }
+       func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
+    guard let _video else { return }
 
-            if _video.onReceiveAdEvent != nil {
-                let type = convertEventToString(event: event.type)
+    // Keep ad volume in sync with player
+    if _video.isMuted() {
+        adsManager.volume = 0
+    }
 
-                if event.adData != nil {
-                    _video.onReceiveAdEvent?([
-                        "event": type,
-                        "data": event.adData ?? [String](),
-                        "target": _video.reactTag!,
-                    ])
-                } else {
-                    _video.onReceiveAdEvent?([
-                        "event": type,
-                        "target": _video.reactTag!,
-                    ])
-                }
-            }
+    switch event.type {
+    case .LOADED:
+        if _isPictureInPictureActive() {
+            return
+        }
+        // ✅ Start only once per pod
+        if !adBreakStarted {
+            adsManager.start()
+            adBreakStarted = true
         }
 
+    case .ALL_ADS_COMPLETED, .AD_BREAK_ENDED:
+        // ✅ Reset flag so the next pod can start
+        adBreakStarted = false
+
+    default:
+        break
+    }
+
+    // Pass event to JS side
+    if let onReceiveAdEvent = _video.onReceiveAdEvent {
+        let type = convertEventToString(event: event.type)
+        if let adData = event.adData {
+            onReceiveAdEvent([
+                "event": type,
+                "data": adData,
+                "target": _video.reactTag!,
+            ])
+        } else {
+            onReceiveAdEvent([
+                "event": type,
+                "target": _video.reactTag!,
+            ])
+        }
+    }
+}
         func adsManager(_: IMAAdsManager, didReceive error: IMAAdError) {
             if error.message != nil {
                 print("AdsManager error: " + error.message!)
