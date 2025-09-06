@@ -102,30 +102,36 @@ class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, I
 
     // MARK: - IMAAdsManagerDelegate
 
-   func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
+  func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
     guard let _video else { return }
-       print("versio 1.0")
+      print("version 2.0")
 
     // Keep ad volume in sync with player mute
     if _video.isMuted() {
         adsManager.volume = 0
     }
 
-    print("IMA EVENT:", convertEventToString(event: event.type), "isAdPlaying:", isAdPlaying, "adBreakStarted:", adBreakStarted)
+    print("IMA EVENT:", convertEventToString(event: event.type), 
+          "isAdPlaying:", isAdPlaying, 
+          "adBreakStarted:", adBreakStarted)
 
     switch event.type {
     case .LOADED:
-        // Start ONLY on the first LOADED of a break
-        if !_isPictureInPictureActive() && !adBreakStarted {
+        // Start an ad whenever one is loaded, unless PiP is active
+        if !_isPictureInPictureActive() && !isAdPlaying {
             adsManager.start()
+            isAdPlaying = true
             adBreakStarted = true
         }
+
+    case .COMPLETE, .SKIPPED:
+        // Reset so next ad can start
+        isAdPlaying = false
 
     case .AD_BREAK_STARTED:
         adBreakStarted = true
 
     case .ALL_ADS_COMPLETED, .AD_BREAK_ENDED:
-        // Reset for next break
         adBreakStarted = false
         isAdPlaying = false
 
@@ -150,6 +156,7 @@ class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, I
         }
     }
 }
+
 
     func adsManager(_ adsManager: IMAAdsManager, didReceive error: IMAAdError) {
         if let message = error.message {
