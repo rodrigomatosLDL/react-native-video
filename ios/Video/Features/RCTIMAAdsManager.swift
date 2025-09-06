@@ -103,7 +103,11 @@ class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, I
     // MARK: - IMAAdsManagerDelegate
 
     func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
+          print("receive and not _video")
+        
         guard let _video else { return }
+
+        print("IMA EVENT:", convertEventToString(event: event.type), "isAdPlaying:", isAdPlaying, "adBreakStarted:", adBreakStarted)
 
         // Keep ad volume in sync with player mute
         if _video.isMuted() {
@@ -156,6 +160,8 @@ class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, I
         }
 
         guard let _video else { return }
+
+      
 
         if let onReceiveAdEvent = _video.onReceiveAdEvent {
             onReceiveAdEvent([
