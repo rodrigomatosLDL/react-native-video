@@ -1,239 +1,183 @@
-#if USE_GOOGLE_IMA
 import Foundation
+import AVFoundation
 import GoogleInteractiveMediaAds
+import React
 
-class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, IMALinkOpenerDelegate {
-    private weak var _video: RCTVideo?
-    private var _isPictureInPictureActive: () -> Bool
+@objc(RCTIMAAdsManager)
+class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate {
 
-    // State flags
-    private var adBreakStarted = false          // true after first start() in a break
-    private var isAdPlaying = false             // true between ContentPauseRequested and ContentResumeRequested
+  private var adsLoader: IMAAdsLoader?
+  private var adsManager: IMAAdsManager?
+  private var adDisplayContainer: IMAAdDisplayContainer?
+  private var player: AVPlayer?
+  private var contentPlayhead: IMAAVPlayerContentPlayhead?
+  private var contentUrl: String?
+  private var adTagUrl: String?
+  
+  // React Native props
+  var contentUri: String?
+  var onReceiveAdEvent: RCTDirectEventBlock?
 
-    /* Entry point for the SDK. Used to make ad requests. */
-    private var adsLoader: IMAAdsLoader!
-    /* Main point of interaction with the SDK. Created by the SDK as the result of an ad request. */
-    private var adsManager: IMAAdsManager!
+  init(withPlayer player: AVPlayer) {
+    self.player = player
+    self.contentPlayhead = IMAAVPlayerContentPlayhead(avPlayer: player)
+    super.init()
+    self.adsLoader = IMAAdsLoader(settings: nil)
+    self.adsLoader?.delegate = self
+  }
 
-    init(video: RCTVideo!, isPictureInPictureActive: @escaping () -> Bool) {
-        _video = video
-        _isPictureInPictureActive = isPictureInPictureActive
-        super.init()
+  @objc(requestAds:contentUri:onReceiveAdEvent:)
+  func requestAds(_ adTagUrl: String, contentUri: String, onReceiveAdEvent: RCTDirectEventBlock?) {
+    self.adTagUrl = adTagUrl
+    self.contentUri = contentUri
+    self.onReceiveAdEvent = onReceiveAdEvent
+    
+    // Create the ad display container
+    let adContainerView = UIApplication.shared.keyWindow?.rootViewController?.view
+    if let adContainerView = adContainerView {
+      self.adDisplayContainer = IMAAdDisplayContainer(adContainer: adContainerView, viewController: nil)
     }
 
-    func setUpAdsLoader() {
-        guard let _video else { return }
-        let settings = IMASettings()
-        if let adLanguage = _video.getAdLanguage() {
-            settings.language = adLanguage
-        }
-        adsLoader = IMAAdsLoader(settings: settings)
-        adsLoader.delegate = self
-    }
+    // Create the ad request
+    let adRequest = IMAAdsRequest(
+      adTagUrl: self.adTagUrl,
+      adDisplayContainer: self.adDisplayContainer,
+      contentPlayhead: self.contentPlayhead,
+      userContext: nil
+    )
 
-    func requestAds() {
-        guard let _video else { return }
-        // fixes RCTVideo --> RCTIMAAdsManager --> IMAAdsLoader --> IMAAdDisplayContainer --> RCTVideo memory leak.
-        let adContainerView = UIView(frame: _video.bounds)
-        adContainerView.backgroundColor = .clear
-        adContainerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        _video.addSubview(adContainerView)
+    self.adsLoader?.requestAds(with: adRequest)
+  }
 
-        let adDisplayContainer = IMAAdDisplayContainer(
-            adContainer: adContainerView,
-            viewController: _video.reactViewController()
-        )
+  // MARK: - IMAAdsLoaderDelegate
 
-        let adTagUrl = _video.getAdTagUrl()
-        let contentPlayhead = _video.getContentPlayhead()
+  func adsLoader(_ loader: IMAAdsLoader, adsLoadedWith adsLoadedData: IMAAdsLoadedData) {
+    self.adsManager = adsLoadedData.adsManager
+    self.adsManager?.delegate = self
+    self.onReceiveAdEvent?([
+      "event": "LOADED",
+      "data": []
+    ])
+    self.adsManager?.initialize(with: self.contentPlayhead)
+  }
 
-        if let adTagUrl, let contentPlayhead {
-            let request = IMAAdsRequest(
-                adTagUrl: adTagUrl,
-                adDisplayContainer: adDisplayContainer,
-                contentPlayhead: contentPlayhead,
-                userContext: nil
-            )
-            adsLoader.requestAds(with: request)
-        }
-    }
+  func adsLoader(_ loader: IMAAdsLoader, failedWith adErrorData: IMAAdLoadingErrorData) {
+    print("Error loading ads: \(adErrorData.adError.message ?? "")")
+    self.onReceiveAdEvent?([
+      "event": "ERROR",
+      "data": ["message": adErrorData.adError.message ?? "Unknown error"]
+    ])
+    self.resetAdsManager() // Clean up on error
+  }
 
-    func releaseAds() {
-        // Reset local flags early to avoid stale state
-        adBreakStarted = false
-        isAdPlaying = false
-
-        guard let adsManager else { return }
-        // Stop immediately (tvos 17 / detach race fix)
-        adsManager.volume = 0
-        adsManager.pause()
-        adsManager.destroy()
-    }
-
-    // MARK: - Getters
-
-    func getAdsLoader() -> IMAAdsLoader? { adsLoader }
-    func getAdsManager() -> IMAAdsManager? { adsManager }
-
-    // MARK: - IMAAdsLoaderDelegate
-
-    func adsLoader(_ loader: IMAAdsLoader, adsLoadedWith adsLoadedData: IMAAdsLoadedData) {
-        guard let _video else { return }
-        adsManager = adsLoadedData.adsManager
-        adsManager?.delegate = self
-
-        let adsRenderingSettings = IMAAdsRenderingSettings()
-        adsRenderingSettings.linkOpenerDelegate = self
-        adsRenderingSettings.linkOpenerPresentingController = _video.reactViewController()
-
-        adsManager.initialize(with: adsRenderingSettings)
-
-        // Reset per-request flags
-        adBreakStarted = false
-        isAdPlaying = false
-    }
-
-    func adsLoader(_ loader: IMAAdsLoader, failedWith adErrorData: IMAAdLoadingErrorData) {
-        if let message = adErrorData.adError.message {
-            print("IMA load error:", message)
-        }
-        _video?.setPaused(false)
-    }
-
-    // MARK: - IMAAdsManagerDelegate
+  // MARK: - IMAAdsManagerDelegate
 
   func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
-    guard let _video else { return }
-      print("version 2.0")
-
-    // Keep ad volume in sync with player mute
-    if _video.isMuted() {
-        adsManager.volume = 0
-    }
-
-    print("IMA EVENT:", convertEventToString(event: event.type), 
-          "isAdPlaying:", isAdPlaying, 
-          "adBreakStarted:", adBreakStarted)
-
     switch event.type {
+    case .STARTED:
+      self.onReceiveAdEvent?([
+        "event": "STARTED",
+        "data": ["ad": event.ad]
+      ])
     case .LOADED:
-        // Start an ad whenever one is loaded, unless PiP is active
-        if !_isPictureInPictureActive() && !isAdPlaying {
-            adsManager.start()
-            isAdPlaying = true
-            adBreakStarted = true
-        }
-
-    case .COMPLETE, .SKIPPED:
-        // Reset so next ad can start
-        isAdPlaying = false
-
+      self.onReceiveAdEvent?([
+        "event": "LOADED",
+        "data": ["ad": event.ad]
+      ])
     case .AD_BREAK_STARTED:
-        adBreakStarted = true
-
-    case .ALL_ADS_COMPLETED, .AD_BREAK_ENDED:
-        adBreakStarted = false
-        isAdPlaying = false
-
+      self.onReceiveAdEvent?([
+        "event": "AD_BREAK_STARTED",
+        "data": []
+      ])
+    case .AD_BREAK_ENDED:
+      self.onReceiveAdEvent?([
+        "event": "AD_BREAK_ENDED",
+        "data": []
+      ])
+    case .TAPPED:
+      self.onReceiveAdEvent?([
+        "event": "TAPPED",
+        "data": []
+      ])
+    case .PAUSE:
+      self.onReceiveAdEvent?([
+        "event": "PAUSE",
+        "data": []
+      ])
+    case .RESUME:
+      self.onReceiveAdEvent?([
+        "event": "RESUME",
+        "data": []
+      ])
+    case .ALL_ADS_COMPLETED:
+      self.onReceiveAdEvent?([
+        "event": "ALL_ADS_COMPLETED",
+        "data": []
+      ])
+    case .FIRST_QUARTILE:
+      self.onReceiveAdEvent?([
+        "event": "FIRST_QUARTILE",
+        "data": []
+      ])
+    case .MIDPOINT:
+      self.onReceiveAdEvent?([
+        "event": "MIDPOINT",
+        "data": []
+      ])
+    case .THIRD_QUARTILE:
+      self.onReceiveAdEvent?([
+        "event": "THIRD_QUARTILE",
+        "data": []
+      ])
+    case .COMPLETED:
+      self.onReceiveAdEvent?([
+        "event": "COMPLETED",
+        "data": []
+      ])
+      // CRITICAL FIX: Reset the ads manager after a single ad completes
+      self.resetAdsManager()
     default:
-        break
+      break
     }
+  }
 
-    // Emit events to JS
-    if let onReceiveAdEvent = _video.onReceiveAdEvent {
-        let type = convertEventToString(event: event.type)
-        if let adData = event.adData {
-            onReceiveAdEvent([
-                "event": type,
-                "data": adData,
-                "target": _video.reactTag!,
-            ])
-        } else {
-            onReceiveAdEvent([
-                "event": type,
-                "target": _video.reactTag!,
-            ])
-        }
-    }
+  // Fix for "does not conform to protocol" error
+  func adsManager(_ adsManager: IMAAdsManager, adDidProgressToTime mediaTime: TimeInterval, adDuration: TimeInterval, adBreakDuration: TimeInterval, isAdBreakSkippable: Bool, adPosition: Int, totalAds: Int) {
+      // This method is required by the IMAAdsManagerDelegate protocol
+      // You can add logic here to track ad progress if needed
+  }
+  
+  func adsManagerDidRequestContentPause(_ adsManager: IMAAdsManager) {
+    self.onReceiveAdEvent?([
+      "event": "CONTENT_PAUSE_REQUESTED",
+      "data": []
+    ])
+  }
+
+  func adsManagerDidRequestContentResume(_ adsManager: IMAAdsManager) {
+    self.onReceiveAdEvent?([
+      "event": "CONTENT_RESUME_REQUESTED",
+      "data": []
+    ])
+  }
+
+  func adsManager(_ adsManager: IMAAdsManager, adDidFailToLoadWith error: IMAAdError) {
+    print("Ad load failed with error: \(error.message ?? "")")
+    self.onReceiveAdEvent?([
+      "event": "ERROR",
+      "data": ["message": error.message ?? "Unknown error"]
+    ])
+    self.resetAdsManager() // Clean up on error
+  }
+
+  // MARK: - Private Methods
+  
+  // New private method to safely release ad objects
+  private func resetAdsManager() {
+    print("Resetting IMA Ads Manager")
+    self.adsManager?.destroy()
+    self.adsManager = nil
+    self.adDisplayContainer = nil
+    self.adsLoader = nil
+  }
 }
-
-
-    func adsManager(_ adsManager: IMAAdsManager, didReceive error: IMAAdError) {
-        if let message = error.message {
-            print("IMA manager error:", message)
-        }
-
-        guard let _video else { return }
-
-      
-
-        if let onReceiveAdEvent = _video.onReceiveAdEvent {
-            onReceiveAdEvent([
-                "event": "ERROR",
-                "data": [
-                    "message": error.message ?? "",
-                    "code": error.code,
-                    "type": error.type,
-                ],
-                "target": _video.reactTag!,
-            ])
-        }
-
-        // Failover to content
-        adBreakStarted = false
-        isAdPlaying = false
-        _video.setPaused(false)
-    }
-
-    func adsManagerDidRequestContentPause(_ adsManager: IMAAdsManager) {
-        // SDK is about to play ads
-        isAdPlaying = true
-        _video?.setPaused(true)
-        _video?.setAdPlaying(true)
-    }
-
-    func adsManagerDidRequestContentResume(_ adsManager: IMAAdsManager) {
-        // SDK finished the ad break
-        isAdPlaying = false
-        adBreakStarted = false
-        _video?.setAdPlaying(false)
-        _video?.setPaused(false)
-    }
-
-    // MARK: - IMALinkOpenerDelegate
-
-    func linkOpenerDidClose(inAppLink _: NSObject) {
-        adsManager?.resume()
-    }
-
-    // MARK: - Helpers
-
-    func convertEventToString(event: IMAAdEventType!) -> String {
-        var result = "UNKNOWN"
-        switch event {
-        case .AD_BREAK_READY:     result = "AD_BREAK_READY"
-        case .AD_BREAK_ENDED:     result = "AD_BREAK_ENDED"
-        case .AD_BREAK_STARTED:   result = "AD_BREAK_STARTED"
-        case .AD_PERIOD_ENDED:    result = "AD_PERIOD_ENDED"
-        case .AD_PERIOD_STARTED:  result = "AD_PERIOD_STARTED"
-        case .ALL_ADS_COMPLETED:  result = "ALL_ADS_COMPLETED"
-        case .CLICKED:            result = "CLICK"
-        case .COMPLETE:           result = "COMPLETED"
-        case .CUEPOINTS_CHANGED:  result = "CUEPOINTS_CHANGED"
-        case .FIRST_QUARTILE:     result = "FIRST_QUARTILE"
-        case .LOADED:             result = "LOADED"
-        case .LOG:                result = "LOG"
-        case .MIDPOINT:           result = "MIDPOINT"
-        case .PAUSE:              result = "PAUSED"
-        case .RESUME:             result = "RESUMED"
-        case .SKIPPED:            result = "SKIPPED"
-        case .STARTED:            result = "STARTED"
-        case .STREAM_LOADED:      result = "STREAM_LOADED"
-        case .TAPPED:             result = "TAPPED"
-        case .THIRD_QUARTILE:     result = "THIRD_QUARTILE"
-        default:                  result = "UNKNOWN"
-        }
-        return result
-    }
-}
-#endif
