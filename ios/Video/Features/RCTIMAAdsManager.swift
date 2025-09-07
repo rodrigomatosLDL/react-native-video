@@ -73,6 +73,9 @@ class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate {
   // MARK: - IMAAdsManagerDelegate
 
   func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
+
+    print("versio 13 - github")
+    
     switch event.type {
     case .STARTED:
       self.onReceiveAdEvent?([
