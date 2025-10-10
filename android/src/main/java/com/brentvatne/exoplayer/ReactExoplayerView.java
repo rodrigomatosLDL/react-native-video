@@ -629,9 +629,9 @@ public class ReactExoplayerView extends FrameLayout implements
 
     // 2. Check the current source for an ad tag URL.
     // The 'source' object is the class member holding all the video info.
-    if (source.getAdTagUrl() != null && !source.getAdTagUrl().isEmpty()) {
-        // 3. Create a new, unique ImaAdsLoader instance for this specific video.
-        adsLoader = new ImaAdsLoader.Builder(getContext()).build();
+    if (source.getAdsProps() != null && source.getAdsProps().getAdTagUrl() != null && !source.getAdsProps().getAdTagUrl().isEmpty()) {
+    adsLoader = new ImaAdsLoader.Builder(getContext()).build();
+    adsLoader.setPlayer(player);
     }
     // **END OF ADAPTATION**
     
@@ -872,15 +872,15 @@ public class ReactExoplayerView extends FrameLayout implements
     // **START OF ADAPTATION**
     MediaSource mediaSource;
     // Check if the unique adsLoader instance was created in initializePlayer
-    if (adsLoader != null) {
-        // Wrap the content source with the AdsMediaSource
-        mediaSource = new AdsMediaSource(
-            videoSource,
-            new DefaultDataSourceFactory(getContext(), Util.getUserAgent(getContext(), "your-app-name")), // Replace with your app name
-            adsLoader,
-            exoPlayerView.getAdViewGroup()
-        );
-    } else {
+    if (adsLoader != null && runningSource.getAdsProps() != null && runningSource.getAdsProps().getAdTagUrl() != null && !runningSource.getAdsProps().getAdTagUrl().isEmpty()) {
+    // Wrap the content source with the AdsMediaSource, using the unique adsLoader
+    mediaSource = new AdsMediaSource(
+        videoSource,
+        new DefaultDataSourceFactory(getContext(), Util.getUserAgent(getContext(), "your-user-agent")),
+        adsLoader,
+        this // Use 'this'
+    );
+} else {
         // No ads, just use the original video source
         mediaSource = videoSource;
     }
