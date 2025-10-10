@@ -106,8 +106,6 @@ import androidx.media3.extractor.metadata.id3.Id3Frame;
 import androidx.media3.extractor.metadata.id3.TextInformationFrame;
 import androidx.media3.session.MediaSessionService;
 
-import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory; 
-import com.google.android.exoplayer2.util.Util;
 
 import com.brentvatne.common.api.AdsProps;
 import com.brentvatne.common.api.BufferConfig;
@@ -140,6 +138,7 @@ import com.google.ads.interactivemedia.v3.api.AdEvent;
 import com.google.ads.interactivemedia.v3.api.ImaSdkFactory;
 import com.google.ads.interactivemedia.v3.api.ImaSdkSettings;
 import com.google.common.collect.ImmutableList;
+import com.google.android.exoplayer2.upstream.DefaultDataSource.Factory;
 
 import java.net.CookieHandler;
 import java.net.CookieManager;
@@ -634,7 +633,7 @@ public class ReactExoplayerView extends FrameLayout implements
 
     // 2. Check the current source for an ad tag URL.
     // The 'source' object is the class member holding all the video info.
-    if (source.getAdsProps() != null && !TextUtils.isEmpty(source.getAdsProps().getAdTagUrl())) {
+    if (source.getAdsProps() != null && !TextUtils.isEmpty(source.getAdsProps().getAdTagUrl().toString())) {
     adsLoader = new ImaAdsLoader.Builder(getContext()).build();
     adsLoader.setPlayer(player);
 }
@@ -877,11 +876,12 @@ public class ReactExoplayerView extends FrameLayout implements
     // **START OF ADAPTATION**
     MediaSource mediaSource;
     // Check if the unique adsLoader instance was created in initializePlayer
-    if (adsLoader != null && runningSource.getAdsProps() != null && !TextUtils.isEmpty(runningSource.getAdsProps().getAdTagUrl())) {
+   if (adsLoader != null && runningSource.getAdsProps() != null && !TextUtils.isEmpty(runningSource.getAdsProps().getAdTagUrl().toString())) {
     // Wrap the content source with the AdsMediaSource, using the unique adsLoader
     mediaSource = new AdsMediaSource(
         videoSource,
-        new DefaultDataSourceFactory(getContext(), Util.getUserAgent(getContext(), "your-user-agent")),
+        new DefaultDataSource.Factory(getContext())
+    .setUserAgent(Util.getUserAgent(getContext(), "your-user-agent")),
         adsLoader,
         this // Use 'this'
     );
