@@ -620,6 +620,13 @@ public class ReactExoplayerView extends FrameLayout implements
     }
 
     private void initializePlayer() {
+        // **START OF ADAPTATION (Release any existing ad session)**
+        if (adsLoader != null) {
+            adsLoader.release();
+            adsLoader = null;
+        }
+        // **END OF ADAPTATION**
+        
         disableCache = ReactNativeVideoManager.Companion.getInstance().shouldDisableCache(source);
 
         ReactExoplayerView self = this;
@@ -641,6 +648,16 @@ public class ReactExoplayerView extends FrameLayout implements
                     pipListenerUnsubscribe = PictureInPictureUtil.addLifecycleEventListener(themedReactContext, this);
                     PictureInPictureUtil.applyAutoEnterEnabled(themedReactContext, pictureInPictureParamsBuilder, this.enterPictureInPictureOnLeave);
                 }
+                
+                // **START OF ADAPTATION (Initialize ImaAdsLoader before player source)**
+                // The ImaAdsLoader instance needs to be unique per player and initialized 
+                // before the MediaSource is built in initializePlayerSource.
+                if (adTagUrl != null && !adTagUrl.isEmpty()) {
+                    adsLoader = new ImaAdsLoader.Builder(getContext()).build();
+                    adsLoader.setPlayer(player); // Player must be initialized by now (in initializePlayerCore)
+                }
+                // **END OF ADAPTATION**
+                
                 if (!source.isLocalAssetFile() && !source.isAsset() && source.getBufferConfig().getCacheSize() > 0) {
                     RNVSimpleCache.INSTANCE.setSimpleCache(
                             this.getContext(),
@@ -696,6 +713,9 @@ public class ReactExoplayerView extends FrameLayout implements
         };
         mainHandler.postDelayed(mainRunnable, 1);
     }
+
+
+
 
     public void getCurrentPosition(Promise promise) {
         if (player != null) {
@@ -840,14 +860,39 @@ public class ReactExoplayerView extends FrameLayout implements
             DebugLog.e(TAG, "Failed to initialize DRM Session Manager Framework!");
             return;
         }
+
         // init source to manage ads (external text tracks are now handled in MediaItem)
         MediaSource videoSource = buildMediaSource(runningSource.getUri(),
                 runningSource.getExtension(),
                 drmSessionManager,
                 runningSource.getCropStartMs(),
                 runningSource.getCropEndMs());
-        MediaSource mediaSourceWithAds = initializeAds(videoSource, runningSource);
-        MediaSource mediaSource = Objects.requireNonNullElse(mediaSourceWithAds, videoSource);
+
+        // **START OF ADAPTATION**
+        MediaSource mediaSource = videoSource;
+
+        // Check if a unique adsLoader instance was created in initializePlayer
+        if (adsLoader != null && runningSource.getAdTagUrl() != null && !runningSource.getAdTagUrl().isEmpty()) {
+            // Wrap the content source with the AdsMediaSource, using the unique adsLoader
+            // Note: The `exoPlayerView` must be accessible here to provide the ad view group.
+            mediaSource = new AdsMediaSource(
+                videoSource,
+                new DefaultDataSourceFactory(getContext(), Util.getUserAgent(getContext(), "your-user-agent")), // Replace with your actual DataSource.Factory
+                adsLoader,
+                exoPlayerView.getAdViewGroup() // Ensure this returns the correct ViewGroup for ad overlays
+            );
+        } else {
+            // Original logic: If no unique adsLoader, fallback to original initializeAds or use plain videoSource
+            // Assuming your original initializeAds function also handled ad state management, 
+            // we remove the call to avoid conflicts and rely solely on the new adsLoader.
+            // If initializeAds did other non-ad-related things, you might need to preserve that logic.
+            
+            // Removing: MediaSource mediaSourceWithAds = initializeAds(videoSource, runningSource);
+            // And directly using videoSource or the AdsMediaSource.
+        }
+        
+        // MediaSource mediaSource = Objects.requireNonNullElse(mediaSourceWithAds, videoSource); // <- This line is replaced by the logic above.
+        // **END OF ADAPTATION**
 
         // wait for player to be set
         while (player == null) {
