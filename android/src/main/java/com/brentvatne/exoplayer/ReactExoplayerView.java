@@ -7,6 +7,8 @@ import static androidx.media3.common.C.CONTENT_TYPE_RTSP;
 import static androidx.media3.common.C.CONTENT_TYPE_SS;
 import static androidx.media3.common.C.TIME_END_OF_SOURCE;
 
+
+import android.text.TextUtils;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -103,6 +105,9 @@ import androidx.media3.extractor.metadata.emsg.EventMessage;
 import androidx.media3.extractor.metadata.id3.Id3Frame;
 import androidx.media3.extractor.metadata.id3.TextInformationFrame;
 import androidx.media3.session.MediaSessionService;
+
+import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory; 
+import com.google.android.exoplayer2.util.Util;
 
 import com.brentvatne.common.api.AdsProps;
 import com.brentvatne.common.api.BufferConfig;
@@ -629,10 +634,10 @@ public class ReactExoplayerView extends FrameLayout implements
 
     // 2. Check the current source for an ad tag URL.
     // The 'source' object is the class member holding all the video info.
-    if (source.getAdsProps() != null && source.getAdsProps().getAdTagUrl() != null && !source.getAdsProps().getAdTagUrl().isEmpty()) {
+    if (source.getAdsProps() != null && !TextUtils.isEmpty(source.getAdsProps().getAdTagUrl())) {
     adsLoader = new ImaAdsLoader.Builder(getContext()).build();
     adsLoader.setPlayer(player);
-    }
+}
     // **END OF ADAPTATION**
     
     disableCache = ReactNativeVideoManager.Companion.getInstance().shouldDisableCache(source);
@@ -872,7 +877,7 @@ public class ReactExoplayerView extends FrameLayout implements
     // **START OF ADAPTATION**
     MediaSource mediaSource;
     // Check if the unique adsLoader instance was created in initializePlayer
-    if (adsLoader != null && runningSource.getAdsProps() != null && runningSource.getAdsProps().getAdTagUrl() != null && !runningSource.getAdsProps().getAdTagUrl().isEmpty()) {
+    if (adsLoader != null && runningSource.getAdsProps() != null && !TextUtils.isEmpty(runningSource.getAdsProps().getAdTagUrl())) {
     // Wrap the content source with the AdsMediaSource, using the unique adsLoader
     mediaSource = new AdsMediaSource(
         videoSource,
