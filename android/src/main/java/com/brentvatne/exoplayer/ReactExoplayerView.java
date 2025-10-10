@@ -650,9 +650,8 @@ public class ReactExoplayerView extends FrameLayout implements
                 }
                 
                 // **START OF ADAPTATION (Initialize ImaAdsLoader before player source)**
-                // The ImaAdsLoader instance needs to be unique per player and initialized 
-                // before the MediaSource is built in initializePlayerSource.
-                if (adTagUrl != null && !adTagUrl.isEmpty()) {
+                // Get ad URL directly from the source object
+                if (source.getAdTagUrl() != null && !source.getAdTagUrl().isEmpty()) { // <-- CHANGE HERE
                     adsLoader = new ImaAdsLoader.Builder(getContext()).build();
                     adsLoader.setPlayer(player); // Player must be initialized by now (in initializePlayerCore)
                 }
@@ -713,7 +712,6 @@ public class ReactExoplayerView extends FrameLayout implements
         };
         mainHandler.postDelayed(mainRunnable, 1);
     }
-
 
 
 
