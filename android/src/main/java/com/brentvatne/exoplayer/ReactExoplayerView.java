@@ -7,8 +7,6 @@ import static androidx.media3.common.C.CONTENT_TYPE_RTSP;
 import static androidx.media3.common.C.CONTENT_TYPE_SS;
 import static androidx.media3.common.C.TIME_END_OF_SOURCE;
 
-
-import android.text.TextUtils;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -106,7 +104,6 @@ import androidx.media3.extractor.metadata.id3.Id3Frame;
 import androidx.media3.extractor.metadata.id3.TextInformationFrame;
 import androidx.media3.session.MediaSessionService;
 
-
 import com.brentvatne.common.api.AdsProps;
 import com.brentvatne.common.api.BufferConfig;
 import com.brentvatne.common.api.BufferingStrategy;
@@ -138,7 +135,6 @@ import com.google.ads.interactivemedia.v3.api.AdEvent;
 import com.google.ads.interactivemedia.v3.api.ImaSdkFactory;
 import com.google.ads.interactivemedia.v3.api.ImaSdkSettings;
 import com.google.common.collect.ImmutableList;
-import com.google.android.exoplayer2.upstream.DefaultDataSource.Factory;
 
 import java.net.CookieHandler;
 import java.net.CookieManager;
@@ -623,105 +619,83 @@ public class ReactExoplayerView extends FrameLayout implements
         }
     }
 
-   private void initializePlayer() {
-    // **START OF ADAPTATION**
-    // 1. Release any adsLoader from a previous video session.
-    if (adsLoader != null) {
-        adsLoader.release();
-        adsLoader = null;
-    }
+    private void initializePlayer() {
+        disableCache = ReactNativeVideoManager.Companion.getInstance().shouldDisableCache(source);
 
-    // 2. Check the current source for an ad tag URL.
-    // The 'source' object is the class member holding all the video info.
-    if (source.getAdsProps() != null && !TextUtils.isEmpty(source.getAdsProps().getAdTagUrl().toString())) {
-    adsLoader = new ImaAdsLoader.Builder(getContext()).build();
-    adsLoader.setPlayer(player);
-}
-    // **END OF ADAPTATION**
-    
-    disableCache = ReactNativeVideoManager.Companion.getInstance().shouldDisableCache(source);
-
-    ReactExoplayerView self = this;
-    Activity activity = themedReactContext.getCurrentActivity();
-    // This ensures all props have been settled, to avoid async racing conditions.
-    Source runningSource = source;
-    mainRunnable = () -> {
-        if (viewHasDropped && runningSource == source) {
-            return;
-        }
-        try {
-            if (runningSource.getUri() == null) {
+        ReactExoplayerView self = this;
+        Activity activity = themedReactContext.getCurrentActivity();
+        // This ensures all props have been settled, to avoid async racing conditions.
+        Source runningSource = source;
+        mainRunnable = () -> {
+            if (viewHasDropped && runningSource == source) {
                 return;
             }
-
-            if (player == null) {
-                // Initialize core configuration and listeners
-                initializePlayerCore(self);
-                // **ADAPTATION**: Associate the player with the adsLoader if it exists.
-                if (adsLoader != null) {
-                    adsLoader.setPlayer(player);
+            try {
+                if (runningSource.getUri() == null) {
+                    return;
                 }
-                pipListenerUnsubscribe = PictureInPictureUtil.addLifecycleEventListener(themedReactContext, this);
-                PictureInPictureUtil.applyAutoEnterEnabled(themedReactContext, pictureInPictureParamsBuilder, this.enterPictureInPictureOnLeave);
-            }
-            
-            if (!source.isLocalAssetFile() && !source.isAsset() && source.getBufferConfig().getCacheSize() > 0) {
-                RNVSimpleCache.INSTANCE.setSimpleCache(
-                        this.getContext(),
-                        source.getBufferConfig().getCacheSize()
-                );
-                useCache = true;
-            } else {
-                useCache = false;
-            }
-            if (playerNeedsSource) {
-                // Will force display of shutter view if needed
-                exoPlayerView.invalidateAspectRatio();
-                // DRM session manager creation must be done on a different thread to prevent crashes so we start a new thread
-                ExecutorService es = Executors.newSingleThreadExecutor();
-                es.execute(() -> {
-                    // DRM initialization must run on a different thread
-                    if (viewHasDropped && runningSource == source) {
-                        return;
-                    }
-                    if (activity == null) {
-                        DebugLog.e(TAG, "Failed to initialize Player!, null activity");
-                        eventEmitter.onVideoError.invoke("Failed to initialize Player!", new Exception("Current Activity is null!"), "1001");
-                        return;
-                    }
 
-                    // Initialize handler to run on the main thread
-                    activity.runOnUiThread(() -> {
+                if (player == null) {
+                    // Initialize core configuration and listeners
+                    initializePlayerCore(self);
+                    pipListenerUnsubscribe = PictureInPictureUtil.addLifecycleEventListener(themedReactContext, this);
+                    PictureInPictureUtil.applyAutoEnterEnabled(themedReactContext, pictureInPictureParamsBuilder, this.enterPictureInPictureOnLeave);
+                }
+                if (!source.isLocalAssetFile() && !source.isAsset() && source.getBufferConfig().getCacheSize() > 0) {
+                    RNVSimpleCache.INSTANCE.setSimpleCache(
+                            this.getContext(),
+                            source.getBufferConfig().getCacheSize()
+                    );
+                    useCache = true;
+                } else {
+                    useCache = false;
+                }
+                if (playerNeedsSource) {
+                    // Will force display of shutter view if needed
+                    exoPlayerView.invalidateAspectRatio();
+                    // DRM session manager creation must be done on a different thread to prevent crashes so we start a new thread
+                    ExecutorService es = Executors.newSingleThreadExecutor();
+                    es.execute(() -> {
+                        // DRM initialization must run on a different thread
                         if (viewHasDropped && runningSource == source) {
                             return;
                         }
-                        try {
-                            // Source initialization must run on the main thread
-                            initializePlayerSource(runningSource);
-                        } catch (Exception ex) {
-                            self.playerNeedsSource = true;
-                            DebugLog.e(TAG, "Failed to initialize Player! 1");
-                            DebugLog.e(TAG, ex.toString());
-                            ex.printStackTrace();
-                            eventEmitter.onVideoError.invoke(ex.toString(), ex, "1001");
+                        if (activity == null) {
+                            DebugLog.e(TAG, "Failed to initialize Player!, null activity");
+                            eventEmitter.onVideoError.invoke("Failed to initialize Player!", new Exception("Current Activity is null!"), "1001");
+                            return;
                         }
+
+                        // Initialize handler to run on the main thread
+                        activity.runOnUiThread(() -> {
+                            if (viewHasDropped && runningSource == source) {
+                                return;
+                            }
+                            try {
+                                // Source initialization must run on the main thread
+                                initializePlayerSource(runningSource);
+                            } catch (Exception ex) {
+                                self.playerNeedsSource = true;
+                                DebugLog.e(TAG, "Failed to initialize Player! 1");
+                                DebugLog.e(TAG, ex.toString());
+                                ex.printStackTrace();
+                                eventEmitter.onVideoError.invoke(ex.toString(), ex, "1001");
+                            }
+                        });
                     });
-                });
-            } else if (runningSource == source) {
-                initializePlayerSource(runningSource);
+                } else if (runningSource == source) {
+                    initializePlayerSource(runningSource);
+                }
+            } catch (Exception ex) {
+                self.playerNeedsSource = true;
+                DebugLog.e(TAG, "Failed to initialize Player! 2");
+                DebugLog.e(TAG, ex.toString());
+                ex.printStackTrace();
+                eventEmitter.onVideoError.invoke(ex.toString(), ex, "1001");
             }
-        } catch (Exception ex) {
-            self.playerNeedsSource = true;
-            DebugLog.e(TAG, "Failed to initialize Player! 2");
-            DebugLog.e(TAG, ex.toString());
-            ex.printStackTrace();
-            eventEmitter.onVideoError.invoke(ex.toString(), ex, "1001");
-        }
-    };
-    mainHandler.postDelayed(mainRunnable, 1);
-}
-
-
+        };
+        mainHandler.postDelayed(mainRunnable, 1);
+    }
 
     public void getCurrentPosition(Promise promise) {
         if (player != null) {
@@ -856,70 +830,54 @@ public class ReactExoplayerView extends FrameLayout implements
     }
 
     private void initializePlayerSource(Source runningSource) {
-    if (runningSource.getUri() == null) {
-        return;
-    }
-    /// init DRM
-    DrmSessionManager drmSessionManager = initializePlayerDrm();
-    if (drmSessionManager == null && runningSource.getDrmProps() != null && runningSource.getDrmProps().getDrmType() != null) {
-        // Failed to initialize DRM session manager - cannot continue
-        DebugLog.e(TAG, "Failed to initialize DRM Session Manager Framework!");
-        return;
-    }
-    // init source to manage ads (external text tracks are now handled in MediaItem)
-    MediaSource videoSource = buildMediaSource(runningSource.getUri(),
-            runningSource.getExtension(),
-            drmSessionManager,
-            runningSource.getCropStartMs(),
-            runningSource.getCropEndMs());
-
-    // **START OF ADAPTATION**
-    MediaSource mediaSource;
-    // Check if the unique adsLoader instance was created in initializePlayer
-   if (adsLoader != null && runningSource.getAdsProps() != null && !TextUtils.isEmpty(runningSource.getAdsProps().getAdTagUrl().toString())) {
-    // Wrap the content source with the AdsMediaSource, using the unique adsLoader
-    mediaSource = new AdsMediaSource(
-        videoSource,
-        new DefaultDataSource.Factory(getContext())
-    .setUserAgent(Util.getUserAgent(getContext(), "your-user-agent")),
-        adsLoader,
-        this // Use 'this'
-    );
-} else {
-        // No ads, just use the original video source
-        mediaSource = videoSource;
-    }
-    // **END OF ADAPTATION**
-
-    // wait for player to be set
-    while (player == null) {
-        try {
-            wait();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            DebugLog.e(TAG, ex.toString());
+        if (runningSource.getUri() == null) {
+            return;
         }
+        /// init DRM
+        DrmSessionManager drmSessionManager = initializePlayerDrm();
+        if (drmSessionManager == null && runningSource.getDrmProps() != null && runningSource.getDrmProps().getDrmType() != null) {
+            // Failed to initialize DRM session manager - cannot continue
+            DebugLog.e(TAG, "Failed to initialize DRM Session Manager Framework!");
+            return;
+        }
+        // init source to manage ads (external text tracks are now handled in MediaItem)
+        MediaSource videoSource = buildMediaSource(runningSource.getUri(),
+                runningSource.getExtension(),
+                drmSessionManager,
+                runningSource.getCropStartMs(),
+                runningSource.getCropEndMs());
+        MediaSource mediaSourceWithAds = initializeAds(videoSource, runningSource);
+        MediaSource mediaSource = Objects.requireNonNullElse(mediaSourceWithAds, videoSource);
+
+        // wait for player to be set
+        while (player == null) {
+            try {
+                wait();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                DebugLog.e(TAG, ex.toString());
+            }
+        }
+
+        boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
+        if (haveResumePosition) {
+            player.seekTo(resumeWindow, resumePosition);
+            player.setMediaSource(mediaSource, false);
+        } else if (runningSource.getStartPositionMs() > 0) {
+            player.setMediaSource(mediaSource, runningSource.getStartPositionMs());
+        } else {
+            player.setMediaSource(mediaSource, true);
+        }
+        player.prepare();
+        playerNeedsSource = false;
+
+        reLayoutControls();
+
+        eventEmitter.onVideoLoadStart.invoke();
+        loadVideoStarted = true;
+
+        finishPlayerInitialization();
     }
-
-    boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
-    if (haveResumePosition) {
-        player.seekTo(resumeWindow, resumePosition);
-        player.setMediaSource(mediaSource, false);
-    } else if (runningSource.getStartPositionMs() > 0) {
-        player.setMediaSource(mediaSource, runningSource.getStartPositionMs());
-    } else {
-        player.setMediaSource(mediaSource, true);
-    }
-    player.prepare();
-    playerNeedsSource = false;
-
-    reLayoutControls();
-
-    eventEmitter.onVideoLoadStart.invoke();
-    loadVideoStarted = true;
-
-    finishPlayerInitialization();
-}
 
     private DrmSessionManager initializePlayerDrm() {
         DrmSessionManager drmSessionManager = null;
