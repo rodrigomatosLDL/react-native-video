@@ -771,17 +771,20 @@ public class ReactExoplayerView extends FrameLayout implements
             Uri adTagUrl = adProps.getAdTagUrl();
             if (adTagUrl != null) {
                 // Create an AdsLoader.
-                ImaAdsLoader.Builder imaLoaderBuilder = new ImaAdsLoader
-                        .Builder(themedReactContext)
-                        .setAdEventListener(this)
-                        .setAdErrorListener(this);
+            if (adsLoader == null) {
+            ImaAdsLoader.Builder imaLoaderBuilder = new ImaAdsLoader
+            .Builder(themedReactContext)
+            .setAdEventListener(this)
+            .setAdErrorListener(this);
 
-                if (adProps.getAdLanguage() != null) {
-                    ImaSdkSettings imaSdkSettings = ImaSdkFactory.getInstance().createImaSdkSettings();
-                    imaSdkSettings.setLanguage(adProps.getAdLanguage());
-                    imaLoaderBuilder.setImaSdkSettings(imaSdkSettings);
-                }
-                adsLoader = imaLoaderBuilder.build();
+            if (adProps.getAdLanguage() != null) {
+                ImaSdkSettings imaSdkSettings = ImaSdkFactory.getInstance().createImaSdkSettings();
+                imaSdkSettings.setLanguage(adProps.getAdLanguage());
+                imaLoaderBuilder.setImaSdkSettings(imaSdkSettings);
+            }
+
+            adsLoader = imaLoaderBuilder.build();
+    }
                 adsLoader.setPlayer(player);
                 if (adsLoader != null) {
                     DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(mediaDataSourceFactory)
@@ -2714,13 +2717,43 @@ public class ReactExoplayerView extends FrameLayout implements
     }
 
     @Override
-    public void onAdEvent(AdEvent adEvent) {
-        if (adEvent.getAdData() != null) {
+public void onAdEvent(AdEvent adEvent) {
+    if (adEvent.getAdData() != null) {
             eventEmitter.onReceiveAdEvent.invoke(adEvent.getType().name(), adEvent.getAdData());
-        } else {
+    } else {
             eventEmitter.onReceiveAdEvent.invoke(adEvent.getType().name(), null);
-        }
     }
+     switch (type) {
+        case CONTENT_PAUSE_REQUESTED:
+            // Pause main content
+            if (player != null && player.isPlaying()) {
+                player.setPlayWhenReady(false);
+            }
+            break;
+
+        case CONTENT_RESUME_REQUESTED:
+            // Resume main content
+            if (player != null) {
+                player.setPlayWhenReady(true);
+            }
+            // Don't release adsLoader here — let IMA finish cleanly
+            break;
+
+        case ALL_ADS_COMPLETED:
+        case ERROR:
+            // Now safe to clean up
+            if (adsLoader != null) {
+                adsLoader.release();
+                adsLoader = null;
+            }
+            break;
+
+        default:
+            // You can log for debugging
+            // Log.d("IMA", "AdEvent: " + type);
+            break;
+    }
+}
 
     @Override
     public void onAdError(AdErrorEvent adErrorEvent) {
