@@ -54,14 +54,12 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.text.CueGroup;
 import androidx.media3.common.util.Util;
 import androidx.media3.datasource.DataSource;
-import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.dash.DashMediaSource;
 import androidx.media3.exoplayer.dash.DashUtil;
-import androidx.media3.exoplayer.dash.DefaultDashChunkSource;
 import androidx.media3.exoplayer.dash.manifest.AdaptationSet;
 import androidx.media3.exoplayer.dash.manifest.DashManifest;
 import androidx.media3.exoplayer.dash.manifest.Period;
@@ -87,7 +85,6 @@ import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.source.MergingMediaSource;
 import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 import androidx.media3.exoplayer.source.TrackGroupArray;
-import androidx.media3.exoplayer.source.ads.AdsMediaSource;
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.exoplayer.trackselection.ExoTrackSelection;
@@ -134,7 +131,6 @@ import com.google.ads.interactivemedia.v3.api.AdErrorEvent;
 import com.google.ads.interactivemedia.v3.api.AdEvent;
 import com.google.ads.interactivemedia.v3.api.ImaSdkFactory;
 import com.google.ads.interactivemedia.v3.api.ImaSdkSettings;
-import com.google.common.collect.ImmutableList;
 
 import java.net.CookieHandler;
 import java.net.CookieManager;
@@ -150,6 +146,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+
 
 @SuppressLint("ViewConstructor")
 public class ReactExoplayerView extends FrameLayout implements
@@ -266,6 +263,23 @@ public class ReactExoplayerView extends FrameLayout implements
     private int selectedSpeedIndex = 1; // Default is 1.0x
 
     private final String instanceId = String.valueOf(UUID.randomUUID());
+
+    private void ensureAdsLoader(@Nullable AdsProps adProps) {
+    if (adsLoader != null) return;
+
+    ImaAdsLoader.Builder builder = new ImaAdsLoader.Builder(themedReactContext)
+            .setAdEventListener(this)
+            .setAdErrorListener(this);
+
+    if (adProps != null && adProps.getAdLanguage() != null) {
+        ImaSdkSettings settings = ImaSdkFactory.getInstance().createImaSdkSettings();
+        settings.setLanguage(adProps.getAdLanguage());
+        builder.setImaSdkSettings(settings);
+    }
+
+    adsLoader = builder.build();
+}
+
 
     private CmcdConfiguration.Factory cmcdConfigurationFactory;
 
@@ -707,96 +721,78 @@ public class ReactExoplayerView extends FrameLayout implements
     }
 
     private void initializePlayerCore(ReactExoplayerView self) {
-        ExoTrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
-        self.trackSelector = new DefaultTrackSelector(getContext(), videoTrackSelectionFactory);
-        self.trackSelector.setParameters(trackSelector.buildUponParameters()
-                .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
+    ExoTrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
+    self.trackSelector = new DefaultTrackSelector(getContext(), videoTrackSelectionFactory);
+    self.trackSelector.setParameters(trackSelector.buildUponParameters()
+            .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
 
-        DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
-        RNVLoadControl loadControl = new RNVLoadControl(
-                allocator,
-                source.getBufferConfig()
-        );
+    DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+    RNVLoadControl loadControl = new RNVLoadControl(
+            allocator,
+            source.getBufferConfig()
+    );
 
-        long initialBitrate = source.getBufferConfig().getInitialBitrate();
-        if (initialBitrate > 0) {
-            config.setInitialBitrate(initialBitrate);
-            this.bandwidthMeter = config.getBandwidthMeter();
-        }
-
-        DefaultRenderersFactory renderersFactory =
-                new DefaultRenderersFactory(getContext())
-                        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
-                        .setEnableDecoderFallback(true)
-                        .forceEnableMediaCodecAsynchronousQueueing();
-
-        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(mediaDataSourceFactory);
-        if (useCache && !disableCache) {
-            mediaSourceFactory.setDataSourceFactory(RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true)));
-        }
-
-        mediaSourceFactory.setLocalAdInsertionComponents(unusedAdTagUri -> adsLoader, exoPlayerView.getPlayerView());
-
-        player = new ExoPlayer.Builder(getContext(), renderersFactory)
-                .setTrackSelector(self.trackSelector)
-                .setBandwidthMeter(bandwidthMeter)
-                .setLoadControl(loadControl)
-                .setMediaSourceFactory(mediaSourceFactory)
-                .build();
-        ReactNativeVideoManager.Companion.getInstance().onInstanceCreated(instanceId, player);
-        refreshDebugState();
-        player.addListener(self);
-        player.setVolume(muted ? 0.f : audioVolume * 1);
-        exoPlayerView.setPlayer(player);
-
-        audioBecomingNoisyReceiver.setListener(self);
-        pictureInPictureReceiver.setListener();
-        bandwidthMeter.addEventListener(new Handler(), self);
-        setPlayWhenReady(!isPaused);
-        playerNeedsSource = true;
-
-        PlaybackParameters params = new PlaybackParameters(rate, 1f);
-        player.setPlaybackParameters(params);
-        changeAudioOutput(this.audioOutput);
-
-        if(showNotificationControls) {
-            setupPlaybackService();
-        }
+    long initialBitrate = source.getBufferConfig().getInitialBitrate();
+    if (initialBitrate > 0) {
+        config.setInitialBitrate(initialBitrate);
+        this.bandwidthMeter = config.getBandwidthMeter();
     }
 
-    private AdsMediaSource initializeAds(MediaSource videoSource, Source runningSource) {
-        AdsProps adProps = runningSource.getAdsProps();
-        Uri uri = runningSource.getUri();
-        if (adProps != null && uri != null) {
-            Uri adTagUrl = adProps.getAdTagUrl();
-            if (adTagUrl != null) {
-                // Create an AdsLoader.
-                ImaAdsLoader.Builder imaLoaderBuilder = new ImaAdsLoader
-                        .Builder(themedReactContext)
-                        .setAdEventListener(this)
-                        .setAdErrorListener(this);
+    DefaultRenderersFactory renderersFactory =
+            new DefaultRenderersFactory(getContext())
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                    .setEnableDecoderFallback(true)
+                    .forceEnableMediaCodecAsynchronousQueueing();
 
-                if (adProps.getAdLanguage() != null) {
-                    ImaSdkSettings imaSdkSettings = ImaSdkFactory.getInstance().createImaSdkSettings();
-                    imaSdkSettings.setLanguage(adProps.getAdLanguage());
-                    imaLoaderBuilder.setImaSdkSettings(imaSdkSettings);
-                }
-                adsLoader = imaLoaderBuilder.build();
-                adsLoader.setPlayer(player);
-                if (adsLoader != null) {
-                    DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(mediaDataSourceFactory)
-                            .setLocalAdInsertionComponents(unusedAdTagUri -> adsLoader, exoPlayerView.getPlayerView());
-                    DataSpec adTagDataSpec = new DataSpec(adTagUrl);
-                    return new AdsMediaSource(videoSource,
-                            adTagDataSpec,
-                            ImmutableList.of(uri, adTagUrl),
-                            mediaSourceFactory, adsLoader, exoPlayerView.getPlayerView());
-                }
-            }
-        }
-
-        return null;
+    // Build the MediaSourceFactory and wire IMA via local ad insertion components
+    DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(mediaDataSourceFactory);
+    if (useCache && !disableCache) {
+        mediaSourceFactory.setDataSourceFactory(RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true)));
     }
+
+    // Ensure the ads loader exists BEFORE providing it to the factory
+    ensureAdsLoader(source.getAdsProps());
+
+    mediaSourceFactory.setLocalAdInsertionComponents(
+            /* adsLoaderProvider */ unusedAdTagUri -> adsLoader,
+            /* adViewProvider  */  exoPlayerView.getPlayerView()
+    );
+
+    player = new ExoPlayer.Builder(getContext(), renderersFactory)
+            .setTrackSelector(self.trackSelector)
+            .setBandwidthMeter(bandwidthMeter)
+            .setLoadControl(loadControl)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build();
+
+    ReactNativeVideoManager.Companion.getInstance().onInstanceCreated(instanceId, player);
+    refreshDebugState();
+    player.addListener(self);
+    player.setVolume(muted ? 0.f : audioVolume * 1);
+    exoPlayerView.setPlayer(player);
+
+    // Attach adsLoader to the player ONCE; keep it attached for the whole session
+    if (adsLoader != null) {
+        adsLoader.setPlayer(player);
+    }
+
+    audioBecomingNoisyReceiver.setListener(self);
+    pictureInPictureReceiver.setListener();
+    bandwidthMeter.addEventListener(new Handler(), self);
+    setPlayWhenReady(!isPaused);
+    playerNeedsSource = true;
+
+    PlaybackParameters params = new PlaybackParameters(rate, 1f);
+    player.setPlaybackParameters(params);
+    changeAudioOutput(this.audioOutput);
+
+    if (showNotificationControls) {
+        setupPlaybackService();
+    }
+}
+
+
+   
 
     private DrmSessionManager buildDrmSessionManager(UUID uuid, DRMProps drmProps) throws UnsupportedDrmException {
         if (Util.SDK_INT < 18) {
@@ -830,54 +826,58 @@ public class ReactExoplayerView extends FrameLayout implements
     }
 
     private void initializePlayerSource(Source runningSource) {
-        if (runningSource.getUri() == null) {
-            return;
-        }
-        /// init DRM
-        DrmSessionManager drmSessionManager = initializePlayerDrm();
-        if (drmSessionManager == null && runningSource.getDrmProps() != null && runningSource.getDrmProps().getDrmType() != null) {
-            // Failed to initialize DRM session manager - cannot continue
-            DebugLog.e(TAG, "Failed to initialize DRM Session Manager Framework!");
-            return;
-        }
-        // init source to manage ads (external text tracks are now handled in MediaItem)
-        MediaSource videoSource = buildMediaSource(runningSource.getUri(),
-                runningSource.getExtension(),
-                drmSessionManager,
-                runningSource.getCropStartMs(),
-                runningSource.getCropEndMs());
-        MediaSource mediaSourceWithAds = initializeAds(videoSource, runningSource);
-        MediaSource mediaSource = Objects.requireNonNullElse(mediaSourceWithAds, videoSource);
-
-        // wait for player to be set
-        while (player == null) {
-            try {
-                wait();
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                DebugLog.e(TAG, ex.toString());
-            }
-        }
-
-        boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
-        if (haveResumePosition) {
-            player.seekTo(resumeWindow, resumePosition);
-            player.setMediaSource(mediaSource, false);
-        } else if (runningSource.getStartPositionMs() > 0) {
-            player.setMediaSource(mediaSource, runningSource.getStartPositionMs());
-        } else {
-            player.setMediaSource(mediaSource, true);
-        }
-        player.prepare();
-        playerNeedsSource = false;
-
-        reLayoutControls();
-
-        eventEmitter.onVideoLoadStart.invoke();
-        loadVideoStarted = true;
-
-        finishPlayerInitialization();
+    if (runningSource.getUri() == null) {
+        return;
     }
+    /// init DRM
+    DrmSessionManager drmSessionManager = initializePlayerDrm();
+    if (drmSessionManager == null && runningSource.getDrmProps() != null && runningSource.getDrmProps().getDrmType() != null) {
+        // Failed to initialize DRM session manager - cannot continue
+        DebugLog.e(TAG, "Failed to initialize DRM Session Manager Framework!");
+        return;
+    }
+
+    // Build ONLY the content source; IMA insertion happens automatically via MediaItem.AdsConfiguration
+    MediaSource videoSource = buildMediaSource(
+            runningSource.getUri(),
+            runningSource.getExtension(),
+            drmSessionManager,
+            runningSource.getCropStartMs(),
+            runningSource.getCropEndMs()
+    );
+
+    MediaSource mediaSource = videoSource; // <-- no AdsMediaSource wrapping
+
+    // wait for player to be set
+    while (player == null) {
+        try {
+            wait();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            DebugLog.e(TAG, ex.toString());
+        }
+    }
+
+    boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
+    if (haveResumePosition) {
+        player.seekTo(resumeWindow, resumePosition);
+        player.setMediaSource(mediaSource, false);
+    } else if (runningSource.getStartPositionMs() > 0) {
+        player.setMediaSource(mediaSource, runningSource.getStartPositionMs());
+    } else {
+        player.setMediaSource(mediaSource, true);
+    }
+    player.prepare();
+    playerNeedsSource = false;
+
+    reLayoutControls();
+
+    eventEmitter.onVideoLoadStart.invoke();
+    loadVideoStarted = true;
+
+    finishPlayerInitialization();
+}
+
 
     private DrmSessionManager initializePlayerDrm() {
         DrmSessionManager drmSessionManager = null;
@@ -983,166 +983,117 @@ public class ReactExoplayerView extends FrameLayout implements
         }
     }
 
-    private MediaSource buildMediaSource(Uri uri, String overrideExtension, DrmSessionManager drmSessionManager, long cropStartMs, long cropEndMs) {
-        if (uri == null) {
-            throw new IllegalStateException("Invalid video uri");
-        }
-        int type;
-        if ("rtsp".equals(overrideExtension)) {
-            type = CONTENT_TYPE_RTSP;
-        } else {
-            type = Util.inferContentType(!TextUtils.isEmpty(overrideExtension) ? "." + overrideExtension
-                    : uri.getLastPathSegment());
-        }
-        config.setDisableDisconnectError(this.disableDisconnectError);
+    private MediaSource buildMediaSource(
+        Uri uri,
+        String overrideExtension,
+        DrmSessionManager drmSessionManager,
+        long cropStartMs,
+        long cropEndMs
+) {
+    if (uri == null) {
+        throw new IllegalStateException("Invalid video uri");
+    }
 
-        MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
-                .setUri(uri);
+    config.setDisableDisconnectError(this.disableDisconnectError);
 
-        // refresh custom Metadata
-        MediaMetadata customMetadata = ConfigurationUtils.buildCustomMetadata(source.getMetadata());
-        if (customMetadata != null) {
-            mediaItemBuilder.setMediaMetadata(customMetadata);
-        }
-        
-        // Add external subtitles to MediaItem
-        List<MediaItem.SubtitleConfiguration> subtitleConfigurations = buildSubtitleConfigurations();
-        if (subtitleConfigurations != null) {
-            mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations);
-        }
-        
-        if (source.getAdsProps() != null) {
-            Uri adTagUrl = source.getAdsProps().getAdTagUrl();
-            if (adTagUrl != null) {
-                mediaItemBuilder.setAdsConfiguration(
-                        new MediaItem.AdsConfiguration.Builder(adTagUrl).build()
-                );
-            }
-        }
+    // 1) Build the MediaItem (including AdsConfiguration + subtitles + metadata)
+    MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
 
-        MediaItem.LiveConfiguration.Builder liveConfiguration = ConfigurationUtils.getLiveConfiguration(source.getBufferConfig());
-        mediaItemBuilder.setLiveConfiguration(liveConfiguration.build());
+    MediaMetadata customMetadata = ConfigurationUtils.buildCustomMetadata(source.getMetadata());
+    if (customMetadata != null) {
+        mediaItemBuilder.setMediaMetadata(customMetadata);
+    }
 
-        MediaSource.Factory mediaSourceFactory;
-        DrmSessionManagerProvider drmProvider;
-        List<StreamKey> streamKeys = new ArrayList<>();
-        if (drmSessionManager != null) {
-            drmProvider = ((_mediaItem) -> drmSessionManager);
-        } else {
-            drmProvider = new DefaultDrmSessionManagerProvider();
-        }
+    List<MediaItem.SubtitleConfiguration> subtitleConfigurations = buildSubtitleConfigurations();
+    if (subtitleConfigurations != null) {
+        mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations);
+    }
 
-
-        switch (type) {
-            case CONTENT_TYPE_SS:
-                if(!BuildConfig.USE_EXOPLAYER_SMOOTH_STREAMING) {
-                    DebugLog.e("Exo Player Exception", "Smooth Streaming is not enabled!");
-                    throw new IllegalStateException("Smooth Streaming is not enabled!");
-                }
-
-                mediaSourceFactory = new SsMediaSource.Factory(
-                        new DefaultSsChunkSource.Factory(mediaDataSourceFactory),
-                        buildDataSourceFactory(false)
-                );
-                break;
-            case CONTENT_TYPE_DASH:
-                if(!BuildConfig.USE_EXOPLAYER_DASH) {
-                    DebugLog.e("Exo Player Exception", "DASH is not enabled!");
-                    throw new IllegalStateException("DASH is not enabled!");
-                }
-
-                mediaSourceFactory = new DashMediaSource.Factory(
-                        new DefaultDashChunkSource.Factory(mediaDataSourceFactory),
-                        buildDataSourceFactory(false)
-                );
-                break;
-            case CONTENT_TYPE_HLS:
-                if (!BuildConfig.USE_EXOPLAYER_HLS) {
-                    DebugLog.e("Exo Player Exception", "HLS is not enabled!");
-                    throw new IllegalStateException("HLS is not enabled!");
-                }
-
-                DataSource.Factory dataSourceFactory = mediaDataSourceFactory;
-
-                if (useCache && !disableCache) {
-                    dataSourceFactory = RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true));
-                }
-
-                mediaSourceFactory = new HlsMediaSource.Factory(
-                        dataSourceFactory
-                ).setAllowChunklessPreparation(source.getTextTracksAllowChunklessPreparation());
-                break;
-            case CONTENT_TYPE_OTHER:
-                if ("asset".equals(uri.getScheme())) {
-                    try {
-                        DataSource.Factory assetDataSourceFactory = DataSourceUtil.buildAssetDataSourceFactory(themedReactContext, uri);
-                        mediaSourceFactory = new ProgressiveMediaSource.Factory(assetDataSourceFactory);
-                    } catch (Exception e) {
-                        throw new IllegalStateException("cannot open input file:" + uri);
-                    }
-                } else if ("file".equals(uri.getScheme()) ||
-                        !useCache) {
-                    mediaSourceFactory = new ProgressiveMediaSource.Factory(
-                            mediaDataSourceFactory
-                    );
-                } else {
-                    mediaSourceFactory = new ProgressiveMediaSource.Factory(
-                            RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true))
-                    );
-
-                }
-                break;
-            case CONTENT_TYPE_RTSP:
-                if (!BuildConfig.USE_EXOPLAYER_RTSP) {
-                    DebugLog.e("Exo Player Exception", "RTSP is not enabled!");
-                    throw new IllegalStateException("RTSP is not enabled!");
-                }
-
-                mediaSourceFactory = new RtspMediaSource.Factory();
-                break;
-            default: {
-                throw new IllegalStateException("Unsupported type: " + type);
-            }
-        }
-
-        if (cmcdConfigurationFactory != null) {
-            mediaSourceFactory = mediaSourceFactory.setCmcdConfigurationFactory(
-                    cmcdConfigurationFactory::createCmcdConfiguration
+    if (source.getAdsProps() != null) {
+        Uri adTagUrl = source.getAdsProps().getAdTagUrl();
+        if (adTagUrl != null) {
+            mediaItemBuilder.setAdsConfiguration(
+                    new MediaItem.AdsConfiguration.Builder(adTagUrl).build()
             );
         }
-
-        mediaSourceFactory = Objects.requireNonNullElse(
-                ReactNativeVideoManager.Companion.getInstance()
-                        .overrideMediaSourceFactory(source, mediaSourceFactory, mediaDataSourceFactory),
-                mediaSourceFactory
-        );
-
-        mediaItemBuilder.setStreamKeys(streamKeys);
-
-        @Nullable
-        final MediaItem.Builder overridenMediaItemBuilder = ReactNativeVideoManager.Companion.getInstance().overrideMediaItemBuilder(source, mediaItemBuilder);
-
-        MediaItem mediaItem = overridenMediaItemBuilder != null
-                ? overridenMediaItemBuilder.build()
-                : mediaItemBuilder.build();
-
-        MediaSource mediaSource = mediaSourceFactory
-                .setDrmSessionManagerProvider(drmProvider)
-                .setLoadErrorHandlingPolicy(
-                        config.buildLoadErrorHandlingPolicy(source.getMinLoadRetryCount())
-                )
-                .createMediaSource(mediaItem);
-
-        if (cropStartMs >= 0 && cropEndMs >= 0) {
-            return new ClippingMediaSource(mediaSource, cropStartMs * 1000, cropEndMs * 1000);
-        } else if (cropStartMs >= 0) {
-            return new ClippingMediaSource(mediaSource, cropStartMs * 1000, TIME_END_OF_SOURCE);
-        } else if (cropEndMs >= 0) {
-            return new ClippingMediaSource(mediaSource, 0, cropEndMs * 1000);
-        }
-
-        return mediaSource;
     }
+
+    MediaItem.LiveConfiguration.Builder liveConfiguration =
+            ConfigurationUtils.getLiveConfiguration(source.getBufferConfig());
+    mediaItemBuilder.setLiveConfiguration(liveConfiguration.build());
+
+    // Stream keys hook if you need it
+    List<StreamKey> streamKeys = new ArrayList<>();
+    mediaItemBuilder.setStreamKeys(streamKeys);
+
+    @Nullable
+    final MediaItem.Builder overriddenMediaItemBuilder =
+            ReactNativeVideoManager.Companion.getInstance()
+                    .overrideMediaItemBuilder(source, mediaItemBuilder);
+
+    MediaItem mediaItem = overriddenMediaItemBuilder != null
+            ? overriddenMediaItemBuilder.build()
+            : mediaItemBuilder.build();
+
+    // 2) Build ONE DefaultMediaSourceFactory and wire everything into it
+DefaultMediaSourceFactory msf;
+if (useCache && !disableCache) {
+    msf = new DefaultMediaSourceFactory(
+            RNVSimpleCache.INSTANCE.getCacheFactory(buildHttpDataSourceFactory(true))
+    );
+} else {
+    msf = new DefaultMediaSourceFactory(mediaDataSourceFactory);
+}
+
+// Ensure ads loader exists and attach local ad insertion components to THIS factory
+ensureAdsLoader(source.getAdsProps());
+msf = msf.setLocalAdInsertionComponents(
+        /* adsLoaderProvider */ unused -> adsLoader,
+        /* adViewProvider  */  exoPlayerView.getPlayerView()
+);
+
+// DRM provider
+DrmSessionManagerProvider drmProvider =
+        (drmSessionManager != null) ? (_mediaItem) -> drmSessionManager
+                                    : new DefaultDrmSessionManagerProvider();
+msf = msf.setDrmSessionManagerProvider(drmProvider);
+
+// CMCD (optional)
+if (cmcdConfigurationFactory != null) {
+    msf = msf.setCmcdConfigurationFactory(cmcdConfigurationFactory::createCmcdConfiguration);
+}
+
+// Error handling policy
+msf = msf.setLoadErrorHandlingPolicy(
+        config.buildLoadErrorHandlingPolicy(source.getMinLoadRetryCount())
+);
+
+// Allow external override AFTER we finish configuring msf.
+// Use a separate MediaSource.Factory variable to avoid generics issues.
+MediaSource.Factory factory = msf;
+MediaSource.Factory overridden =
+        ReactNativeVideoManager.Companion.getInstance()
+                .overrideMediaSourceFactory(source, factory, mediaDataSourceFactory);
+if (overridden != null) {
+    factory = overridden;
+}
+
+// 3) Create the *content+ads* media source via the (possibly overridden) factory
+MediaSource mediaSource = factory.createMediaSource(mediaItem);
+
+
+    // 4) Optional cropping
+    if (cropStartMs >= 0 && cropEndMs >= 0) {
+        return new ClippingMediaSource(mediaSource, cropStartMs * 1000, cropEndMs * 1000);
+    } else if (cropStartMs >= 0) {
+        return new ClippingMediaSource(mediaSource, cropStartMs * 1000, TIME_END_OF_SOURCE);
+    } else if (cropEndMs >= 0) {
+        return new ClippingMediaSource(mediaSource, 0, cropEndMs * 1000);
+    }
+
+    return mediaSource;
+}
+
 
     @Nullable
     private List<MediaItem.SubtitleConfiguration> buildSubtitleConfigurations() {
