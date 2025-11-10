@@ -60,7 +60,7 @@ class ExoPlayerView @JvmOverloads constructor(context: Context, attrs: Attribute
         // Add live badge with its own layout parameters
         val liveBadgeLayoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
         liveBadgeLayoutParams.setMargins(16, 16, 16, 16)
-        addView(liveBadge, liveBadgeLayoutParams)
+        //addView(liveBadge, liveBadgeLayoutParams)
     }
 
     fun setPlayer(player: ExoPlayer?) {
