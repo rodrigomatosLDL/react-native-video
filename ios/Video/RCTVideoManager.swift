@@ -1,4 +1,5 @@
 import AVFoundation
+import Foundation
 import React
 
 @objc(RCTVideoManager)
@@ -107,6 +108,45 @@ class RCTVideoManager: RCTViewManager {
         })
     }
 
+    
+    @objc func resize(_ reactTag: NSNumber, width: NSNumber, height: NSNumber) {
+        print("function resize on RCTVideoManager")
+        
+        bridge.uiManager.addUIBlock { uiManager, viewRegistry in
+            guard let view = viewRegistry?[reactTag] else {
+                RCTLogError("View not found in registry.")
+                return
+            }
+
+            guard let videoView = view as? RCTVideo else {
+                RCTLogError("Invalid view returned from view registry.")
+                return
+            }
+
+            videoView.handleResize(width: width, height: height)
+        }
+    }
+    
+    @objc func receiveCommand(
+        _ reactTag: NSNumber!,
+        commandId: NSNumber!,
+        commandArgs: [Any]!
+      ) {
+          print("received commmand")
+        guard let commandId = commandId else { return }
+        switch commandId.intValue {
+        case 1: // resize
+            print("called resize in RCTVideoManager")
+          if let width = commandArgs?[0] as? NSNumber,
+             let height = commandArgs?[1] as? NSNumber {
+            self.resize(reactTag, width: width, height: height)
+          }
+        default:
+          break
+        }
+      }
+    
+    
     override class func requiresMainQueueSetup() -> Bool {
         return true
     }

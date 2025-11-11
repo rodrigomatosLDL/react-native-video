@@ -283,6 +283,9 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
         #endif
     }
 
+    
+    
+    
     deinit {
         #if USE_GOOGLE_IMA
             _imaAdsManager.releaseAds()
@@ -306,6 +309,27 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
         AudioSessionManager.shared.unregisterView(view: self)
     }
 
+    
+    @objc func handleResize(width: NSNumber, height: NSNumber) {
+        print("handleResize received from manager")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            // 1. Resize the video’s own view
+            var frame = self.frame
+            frame.size = CGSize(width: CGFloat(truncating: width),
+                                height: CGFloat(truncating: height))
+            self.frame = frame
+            self.setNeedsLayout()
+            self.layoutIfNeeded()
+
+            // 2. Also tell ads manager to resize
+            self._imaAdsManager?.resize(width: width, height: height)
+        }
+    }
+
+    
+    
     // MARK: - App lifecycle handlers
 
     func getIsExternalPlaybackActive() -> Bool {
@@ -1388,6 +1412,12 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if let adsManager = _imaAdsManager {
+                   let width = self.bounds.width
+                   let height = self.bounds.height
+                   adsManager.resize(width: NSNumber(value: Float(width)),
+                                     height: NSNumber(value: Float(height)))
+               }
         if _controls, let _playerViewController {
             _playerViewController.view.frame = bounds
             _playerViewController.view.setNeedsLayout()

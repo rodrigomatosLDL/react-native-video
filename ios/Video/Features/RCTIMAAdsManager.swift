@@ -5,6 +5,7 @@
     class RCTIMAAdsManager: NSObject, IMAAdsLoaderDelegate, IMAAdsManagerDelegate, IMALinkOpenerDelegate {
         private weak var _video: RCTVideo?
         private var _isPictureInPictureActive: () -> Bool
+        private var adDisplayContainer: IMAAdDisplayContainer?
 
         /* Entry point for the SDK. Used to make ad requests. */
         private var adsLoader: IMAAdsLoader!
@@ -36,7 +37,10 @@
             _video.addSubview(adContainerView)
 
             // Create ad display container for ad rendering.
+            // Create ad display container for ad rendering.
             let adDisplayContainer = IMAAdDisplayContainer(adContainer: adContainerView, viewController: _video.reactViewController())
+            self.adDisplayContainer = adDisplayContainer
+
 
             let adTagUrl = _video.getAdTagUrl()
             let contentPlayhead = _video.getContentPlayhead()
@@ -172,6 +176,50 @@
         func linkOpenerDidClose(inAppLink _: NSObject) {
             adsManager?.resume()
         }
+        
+        @objc func resize(width: NSNumber, height: NSNumber) {
+                print("resize received on ADS Controller")
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self,
+                          let adDisplayContainer = self.adDisplayContainer else { return }
+
+                    let container = adDisplayContainer.adContainer
+
+                    let window = container.window ?? UIApplication.shared.windows.first { $0.isKeyWindow }
+                    let insets = window?.safeAreaInsets ?? .zero
+                    
+                   // let safeWidth  = max(0, CGFloat(truncating: width)  - (insets.left + insets.right))
+                   // let safeHeight = max(0, CGFloat(truncating: height) - (insets.top  + insets.bottom))
+                     let safeWidth  = max(0, CGFloat(truncating: width))
+                     let safeHeight = max(0, CGFloat(truncating: height))
+
+                    
+                    var frame = container.frame
+                    frame.size = CGSize(width: safeWidth, height: safeHeight)
+                    container.frame = frame
+                    container.setNeedsLayout()
+                    container.layoutIfNeeded()
+                }
+            }
+        
+
+        @objc func pause() {
+                DispatchQueue.main.async {
+                    self.adsManager?.pause()
+                }
+            }
+
+            @objc func resume() {
+                DispatchQueue.main.async {
+                    self.adsManager?.resume()
+                }
+            }
+
+            @objc func stop() {
+                DispatchQueue.main.async {
+                    self.adsManager?.destroy()
+                }
+            }
 
         // MARK: - Helpers
 
